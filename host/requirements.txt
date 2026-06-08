@@ -1,0 +1,2 @@
+# Host bridge dependency. claude_meter (vendored in ./claude_meter) is stdlib-only.
+bleak>=0.21

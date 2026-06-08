@@ -1,0 +1,12 @@
+# Arduino build artifacts
+firmware/**/build/
+firmware/claude_buddy/test/a.out
+
+# Python
+host/**/__pycache__/
+host/.venv/
+*.pyc
+
+# personal / local
+caps.json
+.DS_Store

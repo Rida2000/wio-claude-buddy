@@ -1,0 +1,287 @@
+# Wio Claude Buddy
+
+A desk companion for **Claude Code**, running on a **Seeed Wio Terminal**. An
+animated ASCII pet reacts to your Claude activity, and the screen shows your live
+**sessions**, a Tamagotchi-style **pet-stats** panel, and your real **plan-usage
+gauges** (5‑hour session limit + weekly limit) — all over Bluetooth.
+
+It's a Wio Terminal port of Anthropic's
+[`claude-desktop-buddy`](https://github.com/Links17/claude-desktop-buddy)
+reference firmware, plus a small Python bridge that feeds it data from your
+`~/.claude` logs and Claude's usage API.
+
+```
++------------------------------------------------------+
+| Claude Buddy        [busy]        today 89000     o  |   name · state · tokens · link
++---------------------------+--------------------------+
+|                           | USAGE                    |
+|        /\_/\              |  session 5h        30%   |
+|       ( o.o )             |  [#####.............]    |
+|        > ^ <    busy      |  resets 1h38m            |
+|                           |  weekly            43%   |
+|     (animated pet)        |  [#########.........]    |
+|                           |  resets Sat 21:00        |
++---------------------------+--------------------------+
+| appr 0  deny 0  Lv 2                                 |
++------------------------------------------------------+
+```
+
+Press **B** to cycle the right pane between **SESSIONS**, **PET STATS**
+(mood / fed / energy / level), and **USAGE**.
+
+---
+
+## What you need
+
+**Hardware**
+- A [Seeed Wio Terminal](https://www.seeedstudio.com/Wio-Terminal-p-4509.html)
+- A USB‑C **data** cable (not charge‑only)
+- *(optional)* a microSD card — only for custom GIF character packs
+
+**Software** (host computer that runs Claude Code)
+- [`arduino-cli`](https://arduino.github.io/arduino-cli/latest/installation/)
+- Python 3.9+
+- macOS, Linux, or Windows. The usage‑bridge's token lookup is written for
+  **macOS** (reads the Keychain); see *Token on Linux/Windows* below.
+
+---
+
+## How it works
+
+Two pieces:
+
+1. **Firmware** (`firmware/claude_buddy/`) — runs on the Wio. It's a BLE Nordic
+   UART peripheral that renders the buddy + panels from JSON it receives.
+2. **Host bridge** (`host/buddy_ble_bridge.py`) — runs on your computer. It reads
+   `~/.claude`, connects to the Wio over Bluetooth, and streams it:
+   - a **session heartbeat** (drives the pet + sessions), and
+   - your **plan usage** (session + weekly %), fetched from Claude's own usage
+     endpoint for exact numbers.
+
+The Wio holds a **single** BLE connection, so you choose one data source:
+
+| Source | Pet + sessions | Live approve/deny prompts | Usage gauges |
+|--------|:---:|:---:|:---:|
+| **This bridge** (`buddy_ble_bridge.py`) | ✅ | ❌ | ✅ |
+| Claude Desktop's built-in *Hardware Buddy* | ✅ | ✅ | ❌ |
+
+This project is built around the **bridge** (usage gauges). The firmware also
+speaks the Hardware Buddy protocol if you'd rather use that instead.
+
+---
+
+## Step 1 — Install the toolchain
+
+```bash
+# 1. arduino-cli  (https://arduino.github.io/arduino-cli/latest/installation/)
+#    macOS:  brew install arduino-cli      Linux: curl ... | sh
+
+# 2. Seeed Wio Terminal board package
+arduino-cli config init
+arduino-cli config add board_manager.additional_urls \
+  https://files.seeedstudio.com/arduino/package_seeeduino_boards_index.json
+arduino-cli core update-index
+arduino-cli core install Seeeduino:samd
+
+# 3. Firmware libraries
+arduino-cli lib install "ArduinoJson" "AnimatedGIF" \
+  "Grove-3-Axis-Digital-Accelerometer-2g-to-16g-LIS3DHTR" \
+  "Seeed Arduino rpcBLE" "Seeed Arduino rpcUnified"
+# (GIF character packs only) also:  "Seeed Arduino FS" "Seeed Arduino SFUD"
+```
+
+> The Wio's LCD driver (`Seeed_Arduino_LCD`, a TFT_eSPI fork) is **bundled in the
+> board package** — no separate install. If you *also* have a generic `TFT_eSPI`
+> installed, force the right one with `--library` (see Step 2).
+
+---
+
+## Step 2 — Build & flash the firmware
+
+The Wio's SAMD51 must be in its **bootloader** to flash reliably. **Enter it by
+sliding the power switch (left side) down twice quickly** (a "double‑tap"); the
+screen dims and it mounts for upload. Then:
+
+```bash
+cd firmware/claude_buddy
+
+# find your port (e.g. /dev/cu.usbmodemXXXX on macOS, /dev/ttyACM0 on Linux)
+arduino-cli board list
+
+# build + upload (default build: ASCII buddy + BLE + usage)
+LCD=~/Library/Arduino15/packages/Seeeduino/hardware/samd/1.8.5/libraries/Seeed_Arduino_LCD
+arduino-cli compile --fqbn Seeeduino:samd:seeed_wio_terminal --library "$LCD" \
+  -u -p /dev/cu.usbmodemXXXX claude_buddy.ino
+```
+
+After it flashes, **unplug and replug the USB cable once** to run the firmware.
+You should see a brief "Claude Buddy" splash, then the dashboard (the link dot
+top‑right is red until the bridge connects).
+
+> **macOS LCD path:** the `$LCD` path above pins core version `1.8.5`; adjust if
+> `arduino-cli core list` shows a different version. On Linux the path is under
+> `~/.arduino15/packages/...`. The `--library` override is only needed if a
+> conflicting `TFT_eSPI` is installed — otherwise you can omit it.
+
+---
+
+## Step 3 — Run the host bridge
+
+```bash
+cd host
+python3 -m venv .venv
+. .venv/bin/activate            # Windows: .venv\Scripts\activate
+pip install -r requirements.txt # installs bleak
+
+python buddy_ble_bridge.py
+```
+
+With the Wio powered on and showing the dashboard (and **not** paired in Claude
+Desktop), the bridge finds `Claude Wio`, connects, and starts streaming. You'll
+see:
+
+```
+connected to Claude Wio
+sent (exact): session 30%  week 43%  running 1
+```
+
+On the Wio, press **B** to reach the **USAGE** pane — it now shows your real
+session and weekly percentages with live reset countdowns.
+
+---
+
+## Step 4 — Using it
+
+| Input | When idle | When a prompt is pending* |
+|-------|-----------|---------------------------|
+| **A** (right top button) | cycle pet species | approve once* |
+| **B** (middle top button) | cycle right pane (sessions / pet stats / usage) | — |
+| **C** (left top button) | — | deny* |
+| joystick up / down | scroll the transcript | — |
+| shake the device | dizzy animation | dizzy animation |
+| lay it face‑down | nap (refills the energy bar) | — |
+
+\* Approval prompts only appear when driven by Claude Desktop's Hardware Buddy —
+the bridge derives data from `~/.claude`, which has no pending‑prompt info.
+
+The **pet's mood** comes from how fast you approve and your approve/deny ratio;
+**fed** and **level** come from tokens used; **energy** drains over time and
+refills when you set the device face‑down. (These are kept in RAM and reset on
+reboot — see *Why no persistence* in Troubleshooting.)
+
+---
+
+## Configuration
+
+Edit the constants at the top of `host/buddy_ble_bridge.py`:
+
+| Constant | Default | Meaning |
+|----------|---------|---------|
+| `INTERVAL_S` | `5` | how often the pet/session heartbeat is sent (local, cheap) |
+| `USAGE_POLL_S` | `60` | how often the **exact** usage is fetched from Claude's API |
+
+Keep `USAGE_POLL_S` at ~60 s or higher — the usage endpoint is rate‑limited.
+The on‑screen reset countdown ticks every second between fetches, so it never
+looks frozen.
+
+**Custom GIF characters** (instead of ASCII pets): build with `-DBUDDY_GIF`,
+insert a FAT‑formatted microSD, and put a pack at `/characters/<name>/`
+(`manifest.json` + 96px GIFs; a sample is in `characters/bufo/`). This pulls in
+`Seeed Arduino FS`/`SFUD`. It's off by default because that filesystem library's
+global initializer was crashing on cold boot (see Troubleshooting).
+
+```bash
+arduino-cli compile --fqbn Seeeduino:samd:seeed_wio_terminal --library "$LCD" \
+  --build-property "compiler.cpp.extra_flags=-DBUDDY_GIF" -u -p <port> claude_buddy.ino
+```
+
+---
+
+## Where the usage numbers come from
+
+The bridge calls **`GET https://api.anthropic.com/api/oauth/usage`** — the same
+endpoint Claude Code itself uses — which returns exact `five_hour` and `seven_day`
+utilization (%) and reset timestamps.
+
+It authenticates with **your own** OAuth token. On macOS that token is read from
+the **Keychain** (`security find-generic-password -s "Claude Code-credentials"`),
+because the copy in `~/.claude/.credentials.json` is usually expired. The token
+goes only to `api.anthropic.com` (Anthropic's official host). If the fetch fails
+or is rate‑limited, the bridge falls back to a local estimate from `~/.claude`.
+
+This endpoint is **undocumented** and rate‑limited — Anthropic could change it
+without notice. It's used here purely to mirror your own usage on your own
+display.
+
+**Token on Linux/Windows:** Claude Code may store the token differently there
+(file vs. libsecret vs. DPAPI). Replace `_oauth()` in `buddy_ble_bridge.py` with
+however your platform exposes a *current* `claudeAiOauth.accessToken`. The file
+fallback (`~/.claude/.credentials.json`) works if it isn't expired.
+
+---
+
+## Troubleshooting
+
+These were all real failures during bring‑up — fixes are already in the code.
+
+- **Flashing fails / "uploading error: exit status 1".** The auto‑reset can't
+  reach the bootloader if the app is busy. **Double‑tap the power switch** to
+  enter the bootloader, then upload. After a from‑bootloader flash, **replug** to
+  run the app.
+- **White screen.** A 16‑bit full‑screen sprite (150 KB) doesn't fit beside the
+  BLE stack's RAM; this firmware uses an 8‑bit sprite (77 KB) so it fits. If you
+  see a red "sprite alloc failed" screen, you're out of RAM.
+- **Dark screen / blue LED blinking after a reboot.** A hard fault. The known
+  cause was the `Seeed_FS`/`SD` library's global initializer faulting on cold
+  boot — that's why GIF/filesystem support is the opt‑in `-DBUDDY_GIF` build and
+  the default build omits it.
+- **Board crashes when you press a button.** Was a flash (NVM) write blocking the
+  BLE stack. Fixed: persistence is now RAM‑only (*Why no persistence* below).
+- **Bridge says "not found".** The Wio isn't advertising — boot it (replug) and
+  make sure it isn't paired in Claude Desktop.
+- **Bridge can't reconnect after you restart it.** The firmware intentionally
+  **doesn't re‑advertise after a disconnect** (re‑advertising was crashing
+  rpcBLE). **Replug the Wio**, then start the bridge.
+- **Usage shows 100% / wrong.** The usage probe failed (e.g. expired token →
+  401) and it fell back to the local estimate, which over‑counts cache tokens.
+  Confirm the Keychain has a current token.
+
+**Why no persistence:** writing stats/species to flash (`FlashStorage`) blocks
+for milliseconds and wedges the rpcBLE link, so the device keeps stats in RAM
+only — they reset on reboot. Acceptable trade for stability.
+
+---
+
+## Project layout
+
+```
+firmware/
+  claude_buddy/         the buddy firmware (Arduino sketch)
+    claude_buddy.ino    setup/loop, split-view UI, state machine
+    wio_platform.*      Wio hardware shim (display, buttons, accel, buzzer, soft RTC)
+    ble_bridge.*        rpcBLE Nordic UART peripheral
+    data.h              wire-protocol parsing (heartbeat + usage v:1)
+    buddy*.{h,cpp}      ASCII pet engine
+    buddy_sp_*.cpp      18 pet species
+    character.*         GIF character support (opt-in -DBUDDY_GIF)
+    stats.h             mood/fed/energy/level
+    prefs_compat.h      RAM-only settings store
+    b64.h, xfer.h       base64 + folder-push (GIF) receiver
+    test/test_b64.cpp   native unit test
+  ble_probe/            minimal BLE write-path diagnostic sketch
+host/
+  buddy_ble_bridge.py   the unified BLE bridge
+  claude_meter/         ~/.claude parsing + usage math (vendored)
+  requirements.txt
+characters/bufo/        sample GIF character pack
+```
+
+---
+
+## Credits & license
+
+Port of [`claude-desktop-buddy`](https://github.com/Links17/claude-desktop-buddy)
+© Anthropic, PBC — **MIT** (see `LICENSE`). The 18 ASCII species, the Nordic UART
+protocol, and the `bufo` sample pack come from upstream. The Wio platform port,
+the landscape split‑view UI, the plan‑usage panel, and the BLE bridge are this
+project's additions.
