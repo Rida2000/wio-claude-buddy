@@ -1,5 +1,7 @@
 # Wio Claude Buddy
 
+[![build](https://github.com/Rida2000/wio-claude-buddy/actions/workflows/build.yml/badge.svg)](https://github.com/Rida2000/wio-claude-buddy/actions/workflows/build.yml)
+
 A desk companion for **Claude Code**, running on a **Seeed Wio Terminal**. An
 animated ASCII pet reacts to your Claude activity, and the screen shows your live
 **sessions**, a Tamagotchi-style **pet-stats** panel, and your real **plan-usage
@@ -285,3 +287,7 @@ Port of [`claude-desktop-buddy`](https://github.com/Links17/claude-desktop-buddy
 protocol, and the `bufo` sample pack come from upstream. The Wio platform port,
 the landscape split‑view UI, the plan‑usage panel, and the BLE bridge are this
 project's additions.
+
+`host/claude_meter/` (the `~/.claude` parsing + usage math used by the bridge) is
+vendored from the author's own *claude-usage* meter, MIT (see
+`host/claude_meter/NOTICE`).

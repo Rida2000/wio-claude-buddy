@@ -1,0 +1,52 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  firmware:
+    name: Compile firmware (Wio Terminal)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install arduino-cli
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install Wio Terminal core + libraries
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls \
+            https://files.seeedstudio.com/arduino/package_seeeduino_boards_index.json
+          arduino-cli core update-index
+          arduino-cli core install Seeeduino:samd
+          arduino-cli lib install \
+            "ArduinoJson" \
+            "AnimatedGIF" \
+            "Grove-3-Axis-Digital-Accelerometer-2g-to-16g-LIS3DHTR" \
+            "Seeed Arduino rpcBLE" \
+            "Seeed Arduino rpcUnified"
+
+      - name: Compile firmware (default build)
+        run: |
+          arduino-cli compile \
+            --fqbn Seeeduino:samd:seeed_wio_terminal \
+            firmware/claude_buddy/claude_buddy.ino
+
+      - name: Native unit test (base64 decoder)
+        run: |
+          g++ -std=c++17 firmware/claude_buddy/test/test_b64.cpp -o /tmp/test_b64
+          /tmp/test_b64
+
+  host:
+    name: Lint host bridge
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Byte-compile bridge + claude_meter
+        run: |
+          python -m py_compile host/buddy_ble_bridge.py host/claude_meter/*.py
